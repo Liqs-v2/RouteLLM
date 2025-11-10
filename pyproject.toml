@@ -26,7 +26,10 @@ dependencies = [
 [project.optional-dependencies]
 serve = ["fastapi", "shortuuid", "uvicorn"]
 eval = ["matplotlib", "pandarallel", "sglang", 'tiktoken']
-dev = ["black", "isort", "pre-commit"]
+dev = ["black", "isort", "pre-commit", "notebook", "jupytext", "ipywidgets"]
+train = [
+	"wandb"
+]
 
 [project.urls]
 "Homepage" = "https://github.com/lm-sys/RouteLLM"
