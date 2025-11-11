@@ -215,6 +215,13 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
+    # Set HuggingFace cache directory
+    cache_dir = "/s3/lindenbauer/.cache"
+    os.makedirs(cache_dir, exist_ok=True)
+    os.environ["HF_HOME"] = cache_dir
+    os.environ["TRANSFORMERS_CACHE"] = os.path.join(cache_dir, "transformers")
+    os.environ["HF_DATASETS_CACHE"] = os.path.join(cache_dir, "datasets")
+
     if args.cuda_device is not None:
         if not torch.cuda.is_available():
             raise EnvironmentError("CUDA requested but not available.")

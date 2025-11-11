@@ -14,6 +14,7 @@
 # ---
 
 # %%
+import os
 import random
 from pathlib import Path
 import subprocess
@@ -21,6 +22,16 @@ import sys
 from typing import Iterable, Optional
 
 from datasets import load_dataset
+
+# %% [markdown]
+# ## Configure Cache
+
+# %%
+cache_dir = "/s3/lindenbauer/.cache"
+os.makedirs(cache_dir, exist_ok=True)
+os.environ["HF_HOME"] = cache_dir
+os.environ["TRANSFORMERS_CACHE"] = os.path.join(cache_dir, "transformers")
+os.environ["HF_DATASETS_CACHE"] = os.path.join(cache_dir, "datasets")
 
 # %% [markdown]
 # ## Data
@@ -60,7 +71,7 @@ overfit_indices
 # %%
 project_root = Path("/mnt/shared-fs/lindenbauer/RouteLLM")
 script_path = project_root / "reproduce" / "train_roberta.py"
-models_root = project_root / "reproduce" / "models"
+models_root = Path("/s3/lindenbauer/RouteLLM/models")
 models_root.mkdir(parents=True, exist_ok=True)
 
 
@@ -138,8 +149,30 @@ def run_overfit_training(
     command.extend(["--wandb-run-name", wandb_run_name])
 
     print("Launching training:", " ".join(command))
-    result = subprocess.run(command, check=True)
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+    )
     print(f"Training script finished with return code {result.returncode}")
+
+    if result.stdout:
+        print("Training stdout:")
+        print(result.stdout)
+
+    if result.stderr:
+        print("Training stderr:", file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            returncode=result.returncode,
+            cmd=command,
+            output=result.stdout,
+            stderr=result.stderr,
+        )
+
+    return result
 
 
 # %% [markdown]
@@ -195,3 +228,5 @@ run_overfit_training(
     learning_rate=1e-5,
     weight_decay=0.01,
 )
+
+# %%
