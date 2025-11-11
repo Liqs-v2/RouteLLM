@@ -1,0 +1,16 @@
+---
+alwaysApply: true
+---
+# Overview
+This project contains code for the paper "ROUTELLM: LEARNING TO ROUTE LLMS WITH  PREFERENCE DATA". I am trying to reproduce the BERT-based and Causal LLM routing strategies presented in the paper.
+
+# Rules
+- The main work for this reproduction takes places in the ./reproduce folder.
+- Be concise, favor Pythonic solutions and adhere to clean code best practices.
+- `./reproduce/train_roberta.py` contains the model training script.
+- We use HuggingFace Trainer to train a text classification model ontop of xlm-roberta-base.
+- `./reproduce/roberta-classifier.py` is a Python mirror of the `./reproduce/roberta-classifier.ipynb` Jupyter notebook. Exclusively work with this Python mirror whenever you want to change the notebook, it is more compatible with your way of working.
+- We use the `./reproduce/roberta-classifier.ipynb` Jupyter notebook to orchestrate single training runs and demo data.
+- Use `jupytext --sync reproduce/roberta-classifier.ipynb` to sync changes from the Python mirror to the notebook.
+- If this doesnt work immediately, you must first configure the mirror via `jupytext --set-formats ipynb,py reproduce/roberta-classifier.ipynb`
+- We store heavy data such as models and datasets in `/s3/lindenbauer/RouteLLM/models` and `/s3/lindenbauer/.cache` respectively.
