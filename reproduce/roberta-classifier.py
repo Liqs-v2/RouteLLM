@@ -13,242 +13,185 @@
 #     name: python3
 # ---
 
-# %% [markdown]
-# # WandB example
-
 # %%
-import wandb
+import random
+from pathlib import Path
+import subprocess
+import sys
+from typing import Iterable, Optional
 
-import os
-import numpy as np
 from datasets import load_dataset
-from transformers import TrainingArguments, Trainer
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from huggingface_hub import notebook_login
-import torch
-
-
-def tokenize_function(examples):
-    return tokenizer(examples["prompt"], padding="max_length", truncation=True)
-
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
-    return {"accuracy": np.mean(predictions == labels)}
-
-
-# %% [markdown]
-# # Download model and data
 
 # %% [markdown]
 # ## Data
 
 # %%
+DATASET_NAME = "routellm/mmlu_battles"
+
+
+# %%
 dataset = load_dataset("routellm/mmlu_battles")
-tokenizer = AutoTokenizer.from_pretrained("FacebookAI/xlm-roberta-base")
 
-# %%
-dataset['train'].unique('model_b')
-
-# %% [markdown]
-# Because the model columns just contain one model, and we are implementing binary classification, but we have results in (win_a, win_b, tie), we need to map to just `win_b' = win_b or tie`. This way we route to the smaller model whenever possible.
-#
-# Actually, despite the authors stating that they implement a binary router (ie imply that ties are routed to the small model), their training objective is on (win_a, tie, win_b). So we'll follow that.
-
-# %%
-dataset['train'][0]
-
-# %% [markdown]
-# ## Model
-
-# %%
-# download the model
-model = AutoModelForSequenceClassification.from_pretrained("FacebookAI/xlm-roberta-base", num_labels=3)
-
-# %%
-model
-
-# %% [markdown]
-# The classifier dimensions seem correct and match their model dimensions as shown in HF when inspecting the metadata.
-
-# %% [markdown]
-# # Data prep
-
-# %%
-train_dataset = dataset['train'].map(tokenize_function, batched=True)
-
-# %%
-label_columns = ["winner_model_a", "winner_tie", "winner_model_b"]
-
-def add_label(example):
-    for idx, col in enumerate(label_columns):
-        if example[col]:
-            example["labels"] = idx
-            break
-    return example
-
-train_dataset = train_dataset.map(add_label, batched=False)
 
 # %% [markdown]
 # # Overfit to a single sample
 
 # %%
-overfit_single_dataset = train_dataset.select([2])
+def build_overfit_indices(dataset, seed: int = 1027) -> dict[str, list[int]]:
+    if len(dataset) < 16 * 4:
+        raise ValueError("Dataset too small to build four batch indices (needs at least 64 samples).")
+
+    rng = random.Random(seed)
+    ordered = list(range(len(dataset)))
+    rng.shuffle(ordered)
+
+    indices = {
+        "single_sample": [ordered[0]],
+        "small_subset": sorted(ordered[:4]),
+        "four_batches": sorted(ordered[: 16 * 4]),
+    }
+    return indices
+
+
+overfit_indices = build_overfit_indices(dataset['train'])
+overfit_indices
+
 
 # %%
-overfit_single_dataset
+project_root = Path("/mnt/shared-fs/lindenbauer/RouteLLM")
+script_path = project_root / "reproduce" / "train_roberta.py"
+models_root = project_root / "reproduce" / "models"
+models_root.mkdir(parents=True, exist_ok=True)
+
+
+def format_indices(indices: Iterable[int]) -> str:
+    return ",".join(str(idx) for idx in indices)
+
+
+def run_overfit_training(
+    scenario_key: str,
+    *,
+    output_subdir: str,
+    per_device_train_batch_size: int,
+    per_device_eval_batch_size: int,
+    max_steps: int,
+    save_steps: int,
+    eval_steps: int,
+    logging_steps: int,
+    learning_rate: Optional[float] = None,
+    weight_decay: Optional[float] = None,
+    gradient_accumulation_steps: int = 1,
+    eval_strategy: str = "steps",
+    report_to: Optional[str] = "wandb",
+    cuda_device: Optional[int] = 0,
+) -> None:
+    indices = overfit_indices[scenario_key]
+    index_arg = format_indices(indices)
+    output_dir = models_root / output_subdir
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    command = [
+        sys.executable,
+        str(script_path),
+        "--dataset-name",
+        DATASET_NAME,
+        "--train-split",
+        "train",
+        "--train-indices",
+        index_arg,
+        "--eval-indices",
+        index_arg,
+        "--output-dir",
+        str(output_dir),
+        "--model-name",
+        "FacebookAI/xlm-roberta-base",
+        "--eval-strategy",
+        eval_strategy,
+        "--per-device-train-batch-size",
+        str(per_device_train_batch_size),
+        "--per-device-eval-batch-size",
+        str(per_device_eval_batch_size),
+        "--eval-steps",
+        str(eval_steps),
+        "--max-steps",
+        str(max_steps),
+        "--save-steps",
+        str(save_steps),
+        "--logging-steps",
+        str(logging_steps),
+    ]
+
+    if gradient_accumulation_steps != 1:
+        command.extend(
+            ["--gradient-accumulation-steps", str(gradient_accumulation_steps)]
+        )
+    if learning_rate is not None:
+        command.extend(["--learning-rate", str(learning_rate)])
+    if weight_decay is not None:
+        command.extend(["--weight-decay", str(weight_decay)])
+    if report_to is not None:
+        command.extend(["--report-to", report_to])
+    if cuda_device is not None:
+        command.extend(["--cuda-device", str(cuda_device)])
+
+    wandb_run_name = f"overfit_{scenario_key}"
+    command.extend(["--wandb-run-name", wandb_run_name])
+
+    print("Launching training:", " ".join(command))
+    result = subprocess.run(command, check=True)
+    print(f"Training script finished with return code {result.returncode}")
+
+
+# %% [markdown]
+# ## Overfit to a Single Sample
+
 
 # %%
-torch.cuda.set_device(0)
-
-# set the wandb project where this run will be logged
-os.environ["WANDB_PROJECT"]="my-awesome-project"
-
-# save your trained model checkpoint to wandb
-os.environ["WANDB_LOG_MODEL"]="end"
-
-# turn off watch to log faster
-os.environ["WANDB_WATCH"]="false"
-
-# %%
-# pass "wandb" to the 'report_to' parameter to turn on wandb logging
-training_args = TrainingArguments(
-    output_dir='models',
-    report_to="wandb",
-    logging_steps=5,
+run_overfit_training(
+    scenario_key="single_sample",
+    output_subdir="overfit_single",
     per_device_train_batch_size=1,
     per_device_eval_batch_size=1,
-    eval_strategy="steps",
+    max_steps=100,
+    save_steps=100,
     eval_steps=10,
-    max_steps = 100,
-    save_steps = 100,
-    learning_rate = 1e-5,
-    weight_decay = 0.01
-)
-
-# define the trainer and start training
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=overfit_one_batch,
-    eval_dataset=overfit_one_batch,
-    compute_metrics=compute_metrics,
-)
-trainer.train()
-
-# [optional] finish the wandb run, necessary in notebooks
-wandb.finish()
-
-# %%
-import subprocess
-import sys
-
-script_path = "/mnt/shared-fs/lindenbauer/RouteLLM/reproduce/train_roberta.py"
-output_dir = "/mnt/shared-fs/lindenbauer/RouteLLM/models"
-
-command = [
-    sys.executable,
-    script_path,
-    "--dataset-name",
-    "routellm/mmlu_battles",
-    "--train-split",
-    "train",
-    "--train-indices",
-    "2",
-    "--output-dir",
-    output_dir,
-    "--model-name",
-    "FacebookAI/xlm-roberta-base",
-    "--evaluation-strategy",
-    "steps",
-    "--per-device-train-batch-size",
-    "1",
-    "--per-device-eval-batch-size",
-    "1",
-    "--eval-steps",
-    "10",
-    "--max-steps",
-    "100",
-    "--save-steps",
-    "100",
-    "--logging-steps",
-    "5",
-    "--report-to",
-    "wandb",
-    "--cuda-device",
-    "0",
-    "--wandb-project",
-    "my-awesome-project",
-    "--wandb-log-model",
-    "end",
-    "--wandb-watch",
-    "false",
-]
-
-result = subprocess.run(command, check=True)
-print(f"Training script finished with return code {result.returncode}")
-
-
-# %%
-overfit_single_dataset[0]
-
-# %%
-from tqdm import tqdm
-from collections import Counter
-
-N = 1000
-model.eval()
-pred_ids = []
-for _ in tqdm(range(N)):
-    with torch.no_grad():
-        logits = model(**inputs).logits
-    pred_ids.append(logits.argmax(dim=-1).item())
-
-counts = Counter(pred_ids)
-label_counts = {id_to_label[idx]: counts.get(idx, 0) for idx in id_to_label}
-normalized_counts = {label: count / N for label, count in label_counts.items()}
-
-print("absolute_counts:", label_counts)
-print("normalized_counts:", normalized_counts)
-
-
-# %% [markdown]
-# Great! Overfitting onto a single sample seems to work. Let's slowly scale up the overfitting tests to a few samples, to a batch and a larger subset of the this small dataset.
-
-# %% [markdown]
-# # Overfit to a small subset < batch size (so S=4)
-
-# %%
-model = AutoModelForSequenceClassification.from_pretrained("FacebookAI/xlm-roberta-base", num_labels=3)
-
-# %%
-overfit_small_subset = train_dataset.shuffle(seed=1027).take(8)
-
-# %%
-# pass "wandb" to the 'report_to' parameter to turn on wandb logging
-training_args = TrainingArguments(
-    output_dir='models',
-    report_to="wandb",
     logging_steps=5,
-    per_device_train_batch_size=8,
-    per_device_eval_batch_size=8,
-    eval_strategy="steps",
+)
+
+
+# %% [markdown]
+# ## Overfit to a Small Subset
+
+
+# %%
+run_overfit_training(
+    scenario_key="small_subset",
+    output_subdir="overfit_small_subset",
+    per_device_train_batch_size=4,
+    per_device_eval_batch_size=4,
+    max_steps=200,
+    save_steps=200,
     eval_steps=10,
-    max_steps = 200,
-    save_steps = 200,
-    learning_rate = 1e-5,
-    weight_decay = 0.01
+    logging_steps=5,
+    learning_rate=1e-5,
+    weight_decay=0.01,
 )
 
-# define the trainer and start training
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=overfit_one_batch,
-    eval_dataset=overfit_one_batch,
-    compute_metrics=compute_metrics,
-)
-trainer.train()
 
-# [optional] finish the wandb run, necessary in notebooks
-wandb.finish()
+# %% [markdown]
+# ## Overfit to Four Batches
+
+
+# %%
+run_overfit_training(
+    scenario_key="four_batches",
+    output_subdir="overfit_four_batches",
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    max_steps=400,
+    save_steps=400,
+    eval_steps=25,
+    logging_steps=10,
+    learning_rate=1e-5,
+    weight_decay=0.01,
+)
