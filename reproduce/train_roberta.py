@@ -14,7 +14,7 @@ from typing import List, Optional
 
 import numpy as np
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -32,8 +32,23 @@ LABEL_COLUMNS = ["winner_model_a", "winner_tie", "winner_model_b"]
 
 
 def parse_indices(indices: Optional[str]) -> Optional[List[int]]:
+    """
+    Parse indices from a comma-separated string or a file.
+    
+    If indices starts with '@', treat the rest as a file path containing
+    one integer per line. Otherwise, parse as comma-separated integers.
+    """
     if indices is None:
         return None
+    
+    # If starts with '@', read from file
+    if indices.startswith('@'):
+        filepath = indices[1:]  # Remove '@' prefix
+        with open(filepath, 'r') as f:
+            result = [int(line.strip()) for line in f if line.strip()]
+        return result or None
+    
+    # Otherwise parse as comma-separated string
     cleaned = [segment.strip() for segment in indices.split(",")]
     result = [int(segment) for segment in cleaned if segment]
     return result or None
@@ -75,12 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--train-indices",
         default=None,
-        help="Comma separated list of integer indices to select from the train split.",
+        help="Comma separated list of integer indices or @filepath containing one index per line.",
     )
     parser.add_argument(
         "--eval-indices",
         default=None,
-        help="Comma separated list of integer indices to select from the eval split.",
+        help="Comma separated list of integer indices or @filepath containing one index per line.",
     )
     parser.add_argument(
         "--model-name",
@@ -222,10 +237,9 @@ def main():
     os.environ["TRANSFORMERS_CACHE"] = os.path.join(cache_dir, "transformers")
     os.environ["HF_DATASETS_CACHE"] = os.path.join(cache_dir, "datasets")
 
+    # Control GPU visibility using CUDA_VISIBLE_DEVICES (must be done before GPU initialization)
     if args.cuda_device is not None:
-        if not torch.cuda.is_available():
-            raise EnvironmentError("CUDA requested but not available.")
-        torch.cuda.set_device(args.cuda_device)
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda_device)
 
     if args.wandb_project:
         os.environ["WANDB_PROJECT"] = args.wandb_project
@@ -242,7 +256,13 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
-    dataset = load_dataset(args.dataset_name)
+    # Load dataset from either local disk or HuggingFace Hub
+    if os.path.isdir(args.dataset_name):
+        print(f"Loading dataset from local disk: {args.dataset_name}")
+        dataset = load_from_disk(args.dataset_name)
+    else:
+        print(f"Loading dataset from HuggingFace Hub: {args.dataset_name}")
+        dataset = load_dataset(args.dataset_name)
 
     def tokenize_function(examples):
         return tokenizer(examples["prompt"], **tokenizer_kwargs)
@@ -254,7 +274,9 @@ def main():
             batched=True,
             desc=f"Tokenising {split_name}",
         )
-        base_split = base_split.map(add_label, batched=False)
+        # Only add labels if they don't already exist (e.g., for D_arena dataset)
+        if "labels" not in base_split.column_names:
+            base_split = base_split.map(add_label, batched=False)
 
         if indices:
             return base_split.select(indices)
