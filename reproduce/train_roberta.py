@@ -257,6 +257,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Whether higher metric values are better (False for loss, True for accuracy). Only used if load_best_model_at_end is True.",
     )
+    parser.add_argument(
+        "--freeze-encoder",
+        action="store_true",
+        default=False,
+        help="Freeze encoder parameters and only train the classifier head.",
+    )
     return parser
 
 
@@ -376,6 +382,19 @@ def main():
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_name, num_labels=args.num_labels
     )
+
+    # Freeze encoder parameters if requested
+    if args.freeze_encoder:
+        # For XLM-RoBERTa, the encoder is accessed via model.roberta
+        for param in model.roberta.parameters():
+            param.requires_grad = False
+        
+        # Count trainable and total parameters for verification
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in model.parameters())
+        frozen_params = total_params - trainable_params
+        
+        print(f"Encoder frozen: {frozen_params:,} parameters frozen, {trainable_params:,} parameters trainable (out of {total_params:,} total)")
 
     trainer = Trainer(
         model=model,
