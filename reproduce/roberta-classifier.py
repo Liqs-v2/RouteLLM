@@ -1129,7 +1129,7 @@ run_bert_classifier_training(
 run_bert_classifier_training(
     train_indices=None,
     output_subdir="d_arena_full-w_s",
-    max_steps=4500,
+    max_steps=1500,
     per_device_train_batch_size=64,
     per_device_eval_batch_size=64,
     learning_rate=1e-5,
@@ -1140,6 +1140,41 @@ run_bert_classifier_training(
     logging_steps=10,
     wandb_project="routellm-bert-classifier",
     wandb_run_name="d_arena-w_s-bs64",
+)
+
+# %% [markdown]
+# ## Training Setup 3: Deviating from training configuration in paper
+#
+# Improvements over baseline to try:
+# - Batch size 128 (vs 16) for better gradient estimates
+# - Weight decay 0.02 (vs 0.01) for stronger regularization
+# - Explicit warmup ratio configuration
+# - Train for more steps
+# - Cosine decay
+
+# %% [markdown]
+# ### Warmup
+
+# %%
+run_bert_classifier_training(
+    train_indices=None,
+    output_subdir="d_arena_full-w_s-d_arena-w_s-bs128_warmup01_wdecay005",
+    max_steps=1250,
+    per_device_train_batch_size=128,
+    per_device_eval_batch_size=128,
+    learning_rate=1e-5,
+    weight_decay=0.05,
+    max_length=512,
+    eval_steps=125,
+    save_steps=1250,  # Save only at end
+    logging_steps=10,
+    wandb_project="routellm-bert-classifier",
+    wandb_run_name="d_arena-w_s-bs128_warmup0.1_wdecay0.05",
+    warmup_ratio=0.1,
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_accuracy",
+    greater_is_better=True,
+    save_total_limit=1,
 )
 
 # %%
