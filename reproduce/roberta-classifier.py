@@ -581,6 +581,7 @@ cache_dir = "/s3/lindenbauer/.cache/datasets"
 d_arena_path = os.path.join(cache_dir, "d_arena")
 os.makedirs(cache_dir, exist_ok=True)
 
+# %%
 # Save as DatasetDict with train and validation splits
 d_arena_dict = DatasetDict({
     "train": d_arena_train,
@@ -619,34 +620,44 @@ print(f"Labels indicate which tier won (strong=0-1, weak=2+), not the matchup ty
 print(f"Validation split uses stratified sampling to preserve label proportions.")
 
 # %% [markdown]
-# # Full BERT Classifier Training
-#
-# Train the BERT classifier on the full D_arena dataset using the paper's hyperparameters:
-# - ~2000 steps
-# - Batch size 16
-# - Max sequence length 512
-# - Learning rate 1e-5
-# - Weight decay 0.01
-# - Full parameter fine-tuning
+# # D_arena Classifier Training
 
 # %%
-def build_subset_indices(dataset, fraction: float, seed: int = 42) -> list[int]:
+def build_subset_indices(
+    dataset, 
+    fraction: Optional[float] = None,
+    n_indices: Optional[int] = None,
+    seed: int = 42
+) -> list[int]:
     """
     Build a random subset of indices from a dataset.
     
     Args:
         dataset: The dataset to sample from
-        fraction: Fraction of data to keep (0.0 to 1.0)
+        fraction: Fraction of data to keep (0.0 to 1.0). Mutually exclusive with n_indices.
+        n_indices: Exact number of indices to sample. Mutually exclusive with fraction.
         seed: Random seed for reproducibility
     
     Returns:
         List of sampled indices, sorted
     """
-    if not 0.0 < fraction <= 1.0:
-        raise ValueError(f"Fraction must be in (0.0, 1.0], got {fraction}")
+    # Validate that exactly one parameter is set
+    if (fraction is None) == (n_indices is None):
+        raise ValueError("Exactly one of 'fraction' or 'n_indices' must be set")
     
     total_size = len(dataset)
-    subset_size = int(total_size * fraction)
+    
+    # Calculate subset_size based on provided parameter
+    if fraction is not None:
+        if not 0.0 < fraction <= 1.0:
+            raise ValueError(f"Fraction must be in (0.0, 1.0], got {fraction}")
+        subset_size = int(total_size * fraction)
+    else:
+        if n_indices <= 0:
+            raise ValueError(f"n_indices must be positive, got {n_indices}")
+        if n_indices > total_size:
+            raise ValueError(f"n_indices ({n_indices}) cannot exceed dataset size ({total_size})")
+        subset_size = n_indices
     
     rng = random.Random(seed)
     all_indices = list(range(total_size))
@@ -676,6 +687,7 @@ def run_bert_classifier_training(
     report_to: str = "wandb",
     wandb_project: str = "my-awesome-project",
     wandb_run_name: str = "bert_d_arena_full",
+    wandb_log_model: str = "end",
     cuda_device: Optional[int] = 0,
     seed: int = 42,
 ) -> subprocess.CompletedProcess:
@@ -707,6 +719,7 @@ def run_bert_classifier_training(
         report_to: Where to report metrics (e.g., "wandb")
         wandb_project: WandB project name
         wandb_run_name: WandB run name
+        wandb_log_model: When to log model to wandb ("end", "checkpoint", "false")
         cuda_device: CUDA device index
         seed: Random seed
     
@@ -769,6 +782,8 @@ def run_bert_classifier_training(
         wandb_run_name,
         "--seed",
         str(seed),
+        "--wandb-log-model",
+        wandb_log_model,
     ]
     
     if train_indices is not None:
@@ -805,6 +820,7 @@ def run_bert_classifier_training(
     print(f"\nWandB:")
     print(f"  Project: {wandb_project}")
     print(f"  Run name: {wandb_run_name}")
+    print(f"  Log model: {wandb_log_model}")
     print("=" * 80)
     
     print("\nLaunching training:", " ".join(command))
@@ -833,6 +849,157 @@ def run_bert_classifier_training(
     
     return result
 
+
+# %% [markdown]
+# ## D_arena Overfit Experiments
+#
+# These experiments test if the training pipeline can overfit to small datasets,
+# which would indicate that the data loading and model training are working correctly.
+
+# %%
+def build_d_arena_overfit_indices(dataset, batch_size: int, n_batches: int, seed: int = 1027) -> dict[str, list[int]]:
+    """
+    Build overfitting indices for D_arena dataset.
+
+    Args:
+        dataset: The dataset to sample from
+        batch_size: batch size to use for this experimetn
+        n_batches: number of batches to overfit to
+        seed: Random seed for reproducibility
+
+    Returns:
+        Dictionary with overfitting scenarios
+    """
+    indices = {
+        "single_sample": build_subset_indices(dataset, n_indices=1, seed=seed),
+        "four_samples": build_subset_indices(dataset, n_indices=4, seed=seed),
+        f"{n_batches}_batches": build_subset_indices(dataset, n_indices=batch_size * n_batches, seed=seed),
+    }
+    return indices
+
+
+def run_d_arena_overfit_training(
+    scenario_key: str,
+    *,
+    output_subdir: str,
+    per_device_train_batch_size: int,
+    per_device_eval_batch_size: int,
+    max_steps: int,
+    save_steps: int,
+    eval_steps: int,
+    logging_steps: int,
+    learning_rate: float = 1e-5,
+    weight_decay: float = 0.01,
+    max_length: int = 512,
+    eval_strategy: str = "steps",
+    report_to: str = "wandb",
+    wandb_project: str = "routellm-bert-classifier",
+    cuda_device: Optional[int] = 0,
+    seed: int = 1027,
+    n_batches: int = 4
+) -> subprocess.CompletedProcess:
+    """
+    Run overfitting experiments on D_arena dataset.
+    """
+    # Load D_arena dataset
+    d_arena_loaded = load_from_disk(d_arena_path)
+    train_dataset = d_arena_loaded["train"]
+
+    # Build overfitting indices for this scenario
+    overfit_indices = build_d_arena_overfit_indices(train_dataset, per_device_train_batch_size, n_batches, seed=seed)
+    train_indices = overfit_indices[scenario_key]
+
+    # Use same indices for evaluation
+    eval_indices = train_indices
+
+    # Run training
+    result = run_bert_classifier_training(
+        dataset_path=d_arena_path,
+        train_split_name="train",
+        eval_split_name="train",
+        train_indices=train_indices,
+        eval_indices=eval_indices,
+        output_subdir=output_subdir,
+        max_steps=max_steps,
+        per_device_train_batch_size=per_device_train_batch_size,
+        per_device_eval_batch_size=per_device_eval_batch_size,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        max_length=max_length,
+        eval_steps=eval_steps,
+        save_steps=save_steps,
+        logging_steps=logging_steps,
+        eval_strategy=eval_strategy,
+        report_to=report_to,
+        wandb_project=wandb_project,
+        wandb_run_name=f"d_arena_overfit_{scenario_key}",
+        wandb_log_model="false",
+        cuda_device=cuda_device,
+        seed=seed,
+    )
+
+    return result
+
+
+# %% [markdown]
+# ### Overfit to Single Sample
+
+# %%
+run_d_arena_overfit_training(
+    scenario_key="single_sample",
+    output_subdir="d_arena_overfit_single",
+    per_device_train_batch_size=1,
+    per_device_eval_batch_size=1,
+    max_steps=100,
+    save_steps=100,
+    eval_steps=10,
+    logging_steps=5,
+)
+
+# %% [markdown]
+# ### Overfit to Four Samples
+
+# %%
+run_d_arena_overfit_training(
+    scenario_key="four_samples",
+    output_subdir="d_arena_overfit_four_samples",
+    per_device_train_batch_size=4,
+    per_device_eval_batch_size=4,
+    max_steps=200,
+    save_steps=200,
+    eval_steps=10,
+    logging_steps=5,
+    learning_rate=1e-5,
+    weight_decay=0.01,
+)
+
+# %% [markdown]
+# ### Overfit to Four Batches (64 samples)
+
+# %%
+run_d_arena_overfit_training(
+    scenario_key="4_batches",
+    output_subdir="d_arena_overfit_four_batches",
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    max_steps=400,
+    save_steps=400,
+    eval_steps=25,
+    logging_steps=10,
+    learning_rate=1e-5,
+    weight_decay=0.01,
+    n_batches=4
+)
+
+# %% [markdown]
+# ## Full dataset
+# Train the BERT classifier on the full D_arena dataset using the paper's hyperparameters:
+# - ~2000 steps
+# - Batch size 16
+# - Max sequence length 512
+# - Learning rate 1e-5
+# - Weight decay 0.01
+# - Full parameter fine-tuning
 
 # %% [markdown]
 # ## Training Setup 1: Quick Sanity Check (10% of data, 250 steps)
