@@ -156,6 +156,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Learning rate.",
     )
     parser.add_argument(
+        "--lr-scheduler-type",
+        default="linear",
+        help="Learning rate scheduler type (passed to TrainingArguments).",
+    )
+    parser.add_argument(
+        "--warmup-steps",
+        type=int,
+        default=None,
+        help="Number of warmup steps for the learning rate scheduler.",
+    )
+    parser.add_argument(
+        "--warmup-ratio",
+        type=float,
+        default=None,
+        help="Warmup ratio for the learning rate scheduler.",
+    )
+    parser.add_argument(
         "--weight-decay",
         type=float,
         default=0.0,
@@ -223,12 +240,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Optional WANDB_WATCH setting.",
     )
+    parser.add_argument(
+        "--load-best-model-at-end",
+        action="store_true",
+        default=False,
+        help="Load best model at end of training based on metric_for_best_model.",
+    )
+    parser.add_argument(
+        "--metric-for-best-model",
+        default=None,
+        help="Metric to use for selecting best model (e.g., 'eval_loss', 'eval_accuracy'). Only used if load_best_model_at_end is True.",
+    )
+    parser.add_argument(
+        "--greater-is-better",
+        action="store_true",
+        default=False,
+        help="Whether higher metric values are better (False for loss, True for accuracy). Only used if load_best_model_at_end is True.",
+    )
     return parser
 
 
 def main():
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.warmup_steps is not None and args.warmup_ratio is not None:
+        raise ValueError("Specify at most one of warmup_steps or warmup_ratio")
 
     # Set HuggingFace cache directory
     cache_dir = "/s3/lindenbauer/.cache"
@@ -312,6 +349,8 @@ def main():
         weight_decay=args.weight_decay,
         seed=args.seed,
     )
+    if args.lr_scheduler_type is not None:
+        training_args_kwargs["lr_scheduler_type"] = args.lr_scheduler_type
     if args.report_to is not None:
         training_args_kwargs["report_to"] = args.report_to
     if args.eval_steps is not None and training_args_kwargs["eval_strategy"] == "steps":
@@ -322,6 +361,15 @@ def main():
         training_args_kwargs["save_steps"] = args.save_steps
     if args.save_total_limit is not None:
         training_args_kwargs["save_total_limit"] = args.save_total_limit
+    if args.warmup_steps is not None:
+        training_args_kwargs["warmup_steps"] = args.warmup_steps
+    if args.warmup_ratio is not None:
+        training_args_kwargs["warmup_ratio"] = args.warmup_ratio
+    if args.load_best_model_at_end:
+        training_args_kwargs["load_best_model_at_end"] = True
+        if args.metric_for_best_model:
+            training_args_kwargs["metric_for_best_model"] = args.metric_for_best_model
+        training_args_kwargs["greater_is_better"] = args.greater_is_better
 
     training_args = TrainingArguments(**training_args_kwargs)
 

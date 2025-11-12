@@ -704,6 +704,13 @@ def run_bert_classifier_training(
     wandb_log_model: str = "end",
     cuda_device: Optional[int] = 0,
     seed: int = 42,
+    lr_scheduler_type: str = "linear",
+    warmup_ratio: Optional[float] = 0.1,
+    warmup_steps: Optional[int] = None,
+    save_total_limit: Optional[int] = None,
+    load_best_model_at_end: bool = False,
+    metric_for_best_model: Optional[str] = None,
+    greater_is_better: bool = False,
 ) -> subprocess.CompletedProcess:
     """
     Run full parameter SFT of RoBERTa classifier training on a specified dataset.
@@ -736,6 +743,13 @@ def run_bert_classifier_training(
         wandb_log_model: When to log model to wandb ("end", "checkpoint", "false")
         cuda_device: CUDA device index
         seed: Random seed
+        lr_scheduler_type: Learning rate scheduler strategy (defaults to linear decay)
+        warmup_ratio: Fraction of training steps used for warmup (ignored if warmup_steps is set)
+        warmup_steps: Explicit number of warmup steps (overrides warmup_ratio if provided)
+        save_total_limit: Maximum number of checkpoints to keep (None = keep all)
+        load_best_model_at_end: Whether to load best checkpoint at end of training
+        metric_for_best_model: Metric to track for best model (e.g., 'eval_loss', 'eval_accuracy')
+        greater_is_better: Whether higher metric values are better (False for loss, True for accuracy)
     
     Returns:
         subprocess.CompletedProcess result
@@ -800,6 +814,21 @@ def run_bert_classifier_training(
         wandb_log_model,
     ]
     
+    if lr_scheduler_type is not None:
+        command.extend(["--lr-scheduler-type", lr_scheduler_type])
+    if warmup_steps is not None:
+        command.extend(["--warmup-steps", str(warmup_steps)])
+    elif warmup_ratio is not None:
+        command.extend(["--warmup-ratio", str(warmup_ratio)])
+    if save_total_limit is not None:
+        command.extend(["--save-total-limit", str(save_total_limit)])
+    if load_best_model_at_end:
+        command.extend(["--load-best-model-at-end"])
+        if metric_for_best_model:
+            command.extend(["--metric-for-best-model", metric_for_best_model])
+        if greater_is_better:
+            command.extend(["--greater-is-better"])
+    
     if train_indices is not None:
         command.extend(["--train-indices", format_indices(train_indices)])
     if eval_indices is not None:
@@ -829,8 +858,19 @@ def run_bert_classifier_training(
     print(f"  Max sequence length: {max_length}")
     print(f"  Learning rate: {learning_rate}")
     print(f"  Weight decay: {weight_decay}")
+    print(f"  LR scheduler: {lr_scheduler_type}")
+    if warmup_steps is not None:
+        print(f"  Warmup steps: {warmup_steps}")
+    else:
+        print(f"  Warmup ratio: {warmup_ratio}")
     print(f"  Eval every: {eval_steps} steps")
     print(f"  Save every: {save_steps} steps")
+    if save_total_limit is not None:
+        print(f"  Save total limit: {save_total_limit}")
+    if load_best_model_at_end:
+        print(f"  Load best model at end: True")
+        print(f"  Best model metric: {metric_for_best_model or 'eval_loss'}")
+        print(f"  Greater is better: {greater_is_better}")
     print(f"\nWandB:")
     print(f"  Project: {wandb_project}")
     print(f"  Run name: {wandb_run_name}")
