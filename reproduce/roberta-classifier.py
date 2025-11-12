@@ -394,10 +394,24 @@ def is_valid_battle(model_a, model_b, prompt_str):
     
     Criteria:
     1. Both models must be in our tier mapping (64 models)
-    2. Prompt must be >= 16 characters (after extracting first turn)
+    2. Battle must be between strong (tier 0-1) and weak (tier 2+) models
+    3. Prompt must be >= 16 characters (after extracting first turn)
+    
+    This follows the paper's approach: only use battles between M_strong and M_weak.
     """
     # Both models must be in our tier mapping
     if model_a not in MODEL_TIERS or model_b not in MODEL_TIERS:
+        return False
+    
+    # Check that one model is strong (tier 0-1) and the other is weak (tier 2+)
+    tier_a = MODEL_TIERS[model_a]
+    tier_b = MODEL_TIERS[model_b]
+    
+    is_a_strong = tier_a in [0, 1]
+    is_b_strong = tier_b in [0, 1]
+    
+    # Must be exactly one strong and one weak (XOR)
+    if is_a_strong == is_b_strong:
         return False
     
     # Extract first turn and check length
@@ -544,7 +558,7 @@ d_arena = d_arena.cast_column(
 )
 
 split_dataset = d_arena.train_test_split(
-    test_size=5000,
+    test_size=0.1,
     stratify_by_column="labels",
     seed=42
 )
