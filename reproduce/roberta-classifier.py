@@ -1016,7 +1016,7 @@ run_d_arena_overfit_training(
 # - Full parameter fine-tuning
 
 # %% [markdown]
-# ## Training Setup 1: Quick Sanity Check (10% of data, 250 steps)
+# ## Training Setup 1: Quick Sanity Check (10% of data)
 #
 # Before running the full training, we do a quick sanity check to verify:
 # - Data pipeline works correctly
@@ -1025,10 +1025,7 @@ run_d_arena_overfit_training(
 # - WandB logging works
 #
 # This run uses:
-# - 10% of training data (~5,900 samples)
-# - 250 steps (~0.7 epochs)
-# - Eval every 50 steps (5 total evaluations)
-# - Larger eval batch size (64) for faster evaluation on H200
+# - 10%/50% of training data (~5,900 samples)
 # - Expected runtime: ~15-20 minutes
 
 # %%
@@ -1039,11 +1036,28 @@ train_subset_50pct = build_subset_indices(d_arena_loaded_for_subset["train"], fr
 
 # %%
 run_bert_classifier_training(
-    train_indices=train_subset_50pct,
-    output_subdir="bert_classifier_d_arena-50pct_500steps",
+    train_indices=train_subset_10pct,
+    output_subdir="d_arena-10pct-w_s",
     max_steps=500,
-    per_device_train_batch_size=16,
+    per_device_train_batch_size=64,  # Increased from 16 to improve gradient estimates
     per_device_eval_batch_size=64,  # Larger for faster eval on H200
+    learning_rate=1e-5,
+    weight_decay=0.01,
+    max_length=512,
+    eval_steps=25, 
+    save_steps=500,  # Save only at end
+    logging_steps=10,
+    wandb_project="routellm-bert-classifier",
+    wandb_run_name="d_arena-10pct-w_s-bs64",  # Updated run name to reflect batch size
+)
+
+# %%
+run_bert_classifier_training(
+    train_indices=train_subset_50pct,
+    output_subdir="d_arena-50pct-w_s",
+    max_steps=1800,
+    per_device_train_batch_size=128,
+    per_device_eval_batch_size=128,
     learning_rate=1e-5,
     weight_decay=0.01,
     max_length=512,
@@ -1051,7 +1065,7 @@ run_bert_classifier_training(
     save_steps=500,  # Save only at end
     logging_steps=10,
     wandb_project="routellm-bert-classifier",
-    wandb_run_name="bert_classifier_d_arena-50pct_500steps",
+    wandb_run_name="d_arena-50pct-w_s-bs128",
 )
 
 # %% [markdown]
@@ -1072,5 +1086,20 @@ run_bert_classifier_training(
 # - Full parameter fine-tuning
 
 # %%
-# Full training run moved to launch_training.py for overnight execution
-# Run in screen: python reproduce/launch_training.py
+run_bert_classifier_training(
+    train_indices=None,
+    output_subdir="d_arena_full-w_s",
+    max_steps=4500,
+    per_device_train_batch_size=64,
+    per_device_eval_batch_size=64,
+    learning_rate=1e-5,
+    weight_decay=0.01,
+    max_length=512,
+    eval_steps=225, 
+    save_steps=4500,  # Save only at end
+    logging_steps=10,
+    wandb_project="routellm-bert-classifier",
+    wandb_run_name="d_arena-w_s-bs64",
+)
+
+# %%
