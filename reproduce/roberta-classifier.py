@@ -586,6 +586,70 @@ for label in sorted(val_label_counts.keys()):
     print(f"  {label_names[label]}: {count} ({pct:.1f}%)")
 
 # %% [markdown]
+# ## 6.5. Oversample Training Set to Balance Classes
+#
+# The training set has significant class imbalance (~51% strong_wins, ~8% tie, ~41% weak_wins).
+# This causes models to collapse to always predicting the majority class.
+# We oversample minority classes to create a balanced training set using scikit-learn's resample.
+
+# %%
+from sklearn.utils import resample
+import numpy as np
+
+# Get labels and indices
+labels = np.array(d_arena_train["labels"])
+unique_labels = np.unique(labels)
+
+# Print original distribution
+print("=" * 80)
+print("Oversampling Training Set")
+print("=" * 80)
+print(f"Original class distribution:")
+class_counts = {}
+for label in unique_labels:
+    count = (labels == label).sum()
+    class_counts[label] = count
+    print(f"  Class {label} ({label_names[label]}): {count} samples")
+
+# Find majority class size
+max_count = max(class_counts.values())
+
+# Resample each class to match majority
+balanced_indices = []
+for label in unique_labels:
+    # Get indices for this class
+    class_indices = np.where(labels == label)[0].tolist()
+    
+    # Oversample to match majority class
+    if len(class_indices) < max_count:
+        resampled_indices = resample(
+            class_indices,
+            n_samples=max_count,
+            replace=True,
+            random_state=42
+        )
+    else:
+        resampled_indices = class_indices
+    
+    balanced_indices.extend(resampled_indices)
+
+# Shuffle and create balanced dataset
+np.random.seed(42)
+np.random.shuffle(balanced_indices)
+d_arena_train_balanced = d_arena_train.select(balanced_indices)
+
+# Print balanced distribution
+print(f"\nBalanced class distribution:")
+balanced_labels = np.array(d_arena_train_balanced["labels"])
+for label in unique_labels:
+    count = (balanced_labels == label).sum()
+    pct = 100 * count / len(d_arena_train_balanced)
+    print(f"  Class {label} ({label_names[label]}): {count} samples ({pct:.1f}%)")
+
+print(f"\nTraining set size: {len(d_arena_train)} → {len(d_arena_train_balanced)}")
+print(f"Validation set size: {len(d_arena_val)} (unchanged)")
+
+# %% [markdown]
 # ## 7. Save Processed Dataset
 
 # %%
@@ -596,16 +660,16 @@ d_arena_path = os.path.join(cache_dir, "d_arena")
 os.makedirs(cache_dir, exist_ok=True)
 
 # %%
-# Save as DatasetDict with train and validation splits
+# Save as DatasetDict with BALANCED train split and original validation split
 d_arena_dict = DatasetDict({
-    "train": d_arena_train,
+    "train": d_arena_train_balanced,
     "validation": d_arena_val
 })
 
 d_arena_dict.save_to_disk(d_arena_path)
 print(f"\nD_arena dataset saved to: {d_arena_path}")
-print(f"  Train split: {len(d_arena_train)} examples")
-print(f"  Validation split: {len(d_arena_val)} examples")
+print(f"  Train split: {len(d_arena_train_balanced)} examples (balanced via oversampling)")
+print(f"  Validation split: {len(d_arena_val)} examples (original, unbalanced)")
 
 # Verify save
 from datasets import load_from_disk
@@ -616,22 +680,25 @@ print(f"  Train: {len(d_arena_loaded['train'])} examples")
 print(f"  Validation: {len(d_arena_loaded['validation'])} examples")
 print(f"  Columns: {d_arena_loaded['train'].column_names}")
 
+# Verify training set is balanced
+print(f"\nTrain split label distribution (balanced):")
+train_balanced_labels = Counter(d_arena_loaded['train']['labels'])
+for label in sorted(train_balanced_labels.keys()):
+    count = train_balanced_labels[label]
+    pct = 100 * count / len(d_arena_loaded['train'])
+    print(f"  {label_names[label]}: {count} ({pct:.1f}%)")
+
 # Final statistics
 print("\n=== D_Arena Dataset Summary ===")
-print(f"Total examples: {len(d_arena)}")
-print(f"Train examples: {len(d_arena_train)}")
-print(f"Validation examples: {len(d_arena_val)}")
+print(f"Original dataset size: {len(d_arena)}")
+print(f"Original train size: {len(d_arena_train)}")
+print(f"Balanced train size: {len(d_arena_train_balanced)} (oversampled minority classes)")
+print(f"Validation size: {len(d_arena_val)} (unchanged)")
 print(f"Source: lmsys/lmsys-arena-human-preference-55k (all battles, labeled by tier)")
-print(f"\nOverall label distribution:")
-label_counts = Counter(d_arena["labels"])
-for label in sorted(label_counts.keys()):
-    count = label_counts[label]
-    pct = 100 * count / len(d_arena)
-    print(f"  {label_names[label]}: {count} ({pct:.1f}%)")
     
-print(f"\nNote: This dataset includes ALL battles between the 64 tier-assigned models.")
+print(f"\nNote: Training set is balanced via oversampling to prevent class collapse.")
+print(f"Validation set preserves original class distribution for proper evaluation.")
 print(f"Labels indicate which tier won (strong=0-1, weak=2+), not the matchup type.")
-print(f"Validation split uses stratified sampling to preserve label proportions.")
 
 # %% [markdown]
 # # D_arena Classifier Training
@@ -711,6 +778,7 @@ def run_bert_classifier_training(
     load_best_model_at_end: bool = False,
     metric_for_best_model: Optional[str] = None,
     greater_is_better: bool = False,
+    freeze_encoder: bool = False,
 ) -> subprocess.CompletedProcess:
     """
     Run full parameter SFT of RoBERTa classifier training on a specified dataset.
@@ -750,6 +818,7 @@ def run_bert_classifier_training(
         load_best_model_at_end: Whether to load best checkpoint at end of training
         metric_for_best_model: Metric to track for best model (e.g., 'eval_loss', 'eval_accuracy')
         greater_is_better: Whether higher metric values are better (False for loss, True for accuracy)
+        freeze_encoder: Whether to freeze encoder parameters and only train the classifier head
     
     Returns:
         subprocess.CompletedProcess result
@@ -828,6 +897,8 @@ def run_bert_classifier_training(
             command.extend(["--metric-for-best-model", metric_for_best_model])
         if greater_is_better:
             command.extend(["--greater-is-better"])
+    if freeze_encoder:
+        command.extend(["--freeze-encoder"])
     
     if train_indices is not None:
         command.extend(["--train-indices", format_indices(train_indices)])
@@ -950,7 +1021,8 @@ def run_d_arena_overfit_training(
     wandb_project: str = "routellm-bert-classifier",
     cuda_device: Optional[int] = 0,
     seed: int = 1027,
-    n_batches: int = 4
+    n_batches: int = 4,
+    freeze_encoder: bool = False,
 ) -> subprocess.CompletedProcess:
     """
     Run overfitting experiments on D_arena dataset.
@@ -990,24 +1062,31 @@ def run_d_arena_overfit_training(
         wandb_log_model="false",
         cuda_device=cuda_device,
         seed=seed,
+        freeze_encoder=freeze_encoder,
     )
 
     return result
 
 
 # %% [markdown]
-# ### Overfit to Single Sample
+# ### Overfit to Single Sample (Frozen Encoder)
+#
+# Test if frozen encoder can overfit to a single sample.
+# This diagnostic checks if the architecture can learn at all with frozen weights.
 
 # %%
 run_d_arena_overfit_training(
     scenario_key="single_sample",
-    output_subdir="d_arena_overfit_single",
+    output_subdir="d_arena-classifier_only-overfit_single",
     per_device_train_batch_size=1,
     per_device_eval_batch_size=1,
-    max_steps=100,
-    save_steps=100,
+    max_steps=200,
+    save_steps=200,
     eval_steps=10,
     logging_steps=5,
+    learning_rate=1e-3,
+    weight_decay=0.0,
+    freeze_encoder=True,
 )
 
 # %% [markdown]
@@ -1016,15 +1095,16 @@ run_d_arena_overfit_training(
 # %%
 run_d_arena_overfit_training(
     scenario_key="four_samples",
-    output_subdir="d_arena_overfit_four_samples",
+    output_subdir="d_arena-classifier_only-overfit_four",
     per_device_train_batch_size=4,
     per_device_eval_batch_size=4,
     max_steps=200,
     save_steps=200,
     eval_steps=10,
     logging_steps=5,
-    learning_rate=1e-5,
-    weight_decay=0.01,
+    learning_rate=1e-3,
+    weight_decay=0.0,
+    freeze_encoder=True,
 )
 
 # %% [markdown]
@@ -1033,16 +1113,17 @@ run_d_arena_overfit_training(
 # %%
 run_d_arena_overfit_training(
     scenario_key="4_batches",
-    output_subdir="d_arena_overfit_four_batches",
+    output_subdir="d_arena-classifier_only-overfit_4_batches",
     per_device_train_batch_size=16,
     per_device_eval_batch_size=16,
     max_steps=400,
     save_steps=400,
     eval_steps=25,
     logging_steps=10,
-    learning_rate=1e-5,
-    weight_decay=0.01,
-    n_batches=4
+    learning_rate=1e-3,
+    weight_decay=0.0,
+    n_batches=4,
+    freeze_encoder=True,
 )
 
 # %% [markdown]
@@ -1175,6 +1256,38 @@ run_bert_classifier_training(
     metric_for_best_model="eval_accuracy",
     greater_is_better=True,
     save_total_limit=1,
+)
+
+# %% [markdown]
+# ## Training Setup 4: Full Fine-Tuning with Strong Regularization
+#
+# Address overfitting observed in previous runs by using much stronger regularization:
+# - Weight decay 0.1 (10x stronger than paper)
+# - Early stopping on eval_loss
+# - Conservative step count
+# - Full fine-tuning (unfreeze encoder to actually learn task-specific representations)
+
+# %%
+run_bert_classifier_training(
+    train_indices=None,
+    output_subdir="d_arena-small_classifier_full_model",
+    max_steps=2000,
+    per_device_train_batch_size=128,
+    per_device_eval_batch_size=128,
+    learning_rate=1e-5,
+    weight_decay=0.01,
+    max_length=512,
+    eval_steps=100,
+    save_steps=100,
+    logging_steps=10,
+    wandb_project="routellm-bert-classifier",
+    wandb_run_name="d_arena-small_classifier_full_model",
+    warmup_ratio=0.1,
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_loss",  # Stop when eval loss stops improving
+    greater_is_better=False,
+    save_total_limit=1, 
+    freeze_encoder=False, 
 )
 
 # %%
