@@ -57,7 +57,42 @@ def parse_indices(indices: Optional[str]) -> Optional[List[int]]:
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
-    return {"accuracy": float(np.mean(predictions == labels))}
+    
+    # Overall accuracy
+    accuracy = float(np.mean(predictions == labels))
+    
+    # Per-class metrics
+    metrics = {"accuracy": accuracy}
+    
+    # Count predictions per class
+    for class_idx in range(3):
+        class_mask = labels == class_idx
+        if class_mask.sum() > 0:
+            class_accuracy = float(np.mean(predictions[class_mask] == labels[class_mask]))
+            metrics[f"accuracy_class_{class_idx}"] = class_accuracy
+            metrics[f"support_class_{class_idx}"] = int(class_mask.sum())
+        
+        # Count how many times this class was predicted
+        pred_count = int((predictions == class_idx).sum())
+        metrics[f"pred_count_class_{class_idx}"] = pred_count
+    
+    # Compute precision, recall, F1 per class
+    from sklearn.metrics import precision_recall_fscore_support
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        labels, predictions, average=None, zero_division=0
+    )
+    
+    for class_idx in range(3):
+        metrics[f"precision_class_{class_idx}"] = float(precision[class_idx])
+        metrics[f"recall_class_{class_idx}"] = float(recall[class_idx])
+        metrics[f"f1_class_{class_idx}"] = float(f1[class_idx])
+    
+    # Macro averages
+    metrics["precision_macro"] = float(precision.mean())
+    metrics["recall_macro"] = float(recall.mean())
+    metrics["f1_macro"] = float(f1.mean())
+    
+    return metrics
 
 
 def add_label(example):
