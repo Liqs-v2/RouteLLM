@@ -71,6 +71,9 @@ def generate_results(
     plt.legend()
 
     file_name = f"{output}/{benchmark_name}.png"
+    file_dir = os.path.dirname(file_name)
+    if file_dir and not os.path.exists(file_dir):
+        os.makedirs(file_dir, exist_ok=True)
     print("Saving plot to", file_name)
     plt.savefig(file_name, bbox_inches="tight")
 
@@ -267,6 +270,6 @@ if __name__ == "__main__":
         all_results,
         benchmark,
         args.benchmark,
-        controller.model_pair.strong,
+        controller.model_pair,
         args.output,
     )
