@@ -6,6 +6,9 @@ This script runs the official RouteLLM benchmark pipeline three times –
 once per checkpoint – using the pre-computed GPT-4 vs Mixtral evaluation
 results shipped with the repository. Each run writes its plots and metrics
 to an isolated output directory so that results can be compared later on.
+
+Run command used to evaluate all BERT checkpoints (my best, authors base, authors augmented):
+python ./reproduce/benchmark_bert_models.py
 """
 
 import argparse
