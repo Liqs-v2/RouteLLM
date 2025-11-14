@@ -79,7 +79,11 @@ def compute_metrics(eval_pred):
     # Compute precision, recall, F1 per class
     from sklearn.metrics import precision_recall_fscore_support
     precision, recall, f1, _ = precision_recall_fscore_support(
-        labels, predictions, average=None, zero_division=0
+        labels,
+        predictions,
+        average=None,
+        zero_division=0,
+        labels=[0, 1, 2],
     )
     
     for class_idx in range(3):
