@@ -418,6 +418,25 @@ def main():
         args.model_name, num_labels=args.num_labels
     )
 
+    # Replace the default classifier head with a simple linear layer
+    # This reduces parameters from ~593k (768×768 + 768→3) to ~2.3k (768→3)
+    # import torch.nn as nn
+    
+    # class SimpleClassificationHead(nn.Module):
+    #     """Simple classification head that only uses a linear layer on CLS token."""
+    #     def __init__(self, hidden_size, num_labels):
+    #         super().__init__()
+    #         self.dense = nn.Linear(hidden_size, num_labels)
+        
+    #     def forward(self, features, **kwargs):
+    #         # Extract CLS token (first token)
+    #         x = features[:, 0, :]
+    #         x = self.dense(x)
+    #         return x
+    
+    # model.classifier = SimpleClassificationHead(model.config.hidden_size, args.num_labels)
+    # print(f"Replaced classifier head with simple linear layer: {model.config.hidden_size} → {args.num_labels}")
+
     # Freeze encoder parameters if requested
     if args.freeze_encoder:
         # For XLM-RoBERTa, the encoder is accessed via model.roberta
