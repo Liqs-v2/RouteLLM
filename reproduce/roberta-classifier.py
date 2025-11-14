@@ -46,7 +46,7 @@ dataset = load_dataset("routellm/mmlu_battles")
 
 
 # %% [markdown]
-# # Overfit to a single sample
+# # Overfit experiments
 
 # %%
 def build_overfit_indices(dataset, seed: int = 1027) -> dict[str, list[int]]:
@@ -704,6 +704,14 @@ print(f"Labels indicate which tier won (strong=0-1, weak=2+), not the matchup ty
 # # D_arena Classifier Training
 
 # %%
+from datasets import load_from_disk, DatasetDict
+cache_dir = "/s3/lindenbauer/.cache/datasets"
+d_arena_path = os.path.join(cache_dir, "d_arena")
+
+d_arena_loaded = load_from_disk(d_arena_path)
+
+
+# %%
 def build_subset_indices(
     dataset, 
     fraction: Optional[float] = None,
@@ -1258,20 +1266,153 @@ run_bert_classifier_training(
     save_total_limit=1,
 )
 
+
 # %% [markdown]
-# ## Training Setup 4: Full Fine-Tuning with Strong Regularization
+# # Evaluate RouteLLM's Released Checkpoint
 #
-# Address overfitting observed in previous runs by using much stronger regularization:
-# - Weight decay 0.1 (10x stronger than paper)
-# - Early stopping on eval_loss
-# - Conservative step count
-# - Full fine-tuning (unfreeze encoder to actually learn task-specific representations)
+# Load the authors' released `routellm/bert` checkpoint and evaluate it on our D_arena validation set.
+# This will help us understand:
+# 1. How well their checkpoint performs on our (potentially different) validation split
+# 2. If the difference in training data affects performance
+# 3. What metrics they were able to achieve (as a reference point)
+
+# %%
+def evaluate_checkpoint_on_d_arena(
+    model_path: str,
+    d_arena_path: str = d_arena_path,
+    num_labels: int = 3,
+    max_length: int = 512,
+    per_device_eval_batch_size: int = 128,
+    cuda_device: Optional[int] = 0,
+) -> dict:
+    """
+    Evaluate a HuggingFace model checkpoint on the D_arena validation set.
+
+    Args:
+        model_path: Path to the HuggingFace model checkpoint
+        d_arena_path: Path to the D_arena dataset on disk
+        num_labels: Number of labels for classification (default: 3 for strong_wins/tie/weak_wins)
+        max_length: Maximum sequence length for tokenization
+        per_device_eval_batch_size: Batch size for evaluation
+        cuda_device: CUDA device index (None to use default)
+
+    Returns:
+        Dictionary containing evaluation metrics
+    """
+    import sys
+    import torch
+    from pathlib import Path
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
+    from datasets import load_from_disk
+
+    # Import compute_metrics from train_roberta.py
+    sys.path.insert(0, str(Path("/mnt/shared-fs/lindenbauer/RouteLLM/reproduce")))
+    from train_roberta import compute_metrics
+
+    # Set CUDA device if specified
+    if cuda_device is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
+
+    # Load the model checkpoint
+    print(f"Loading {model_path} checkpoint...")
+    model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=num_labels)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    print(f"Model loaded")
+
+    # Load our D_arena validation set
+    d_arena_loaded = load_from_disk(d_arena_path)
+    eval_dataset = d_arena_loaded["validation"]
+
+    print(f"\nEvaluation dataset size: {len(eval_dataset)}")
+
+    # Tokenize the validation set
+    print("\nTokenizing validation set...")
+    def tokenize_function(examples):
+        return tokenizer(examples["prompt"], padding="max_length", truncation=True, max_length=max_length)
+
+    eval_dataset_tokenized = eval_dataset.map(
+        tokenize_function,
+        batched=True,
+        desc="Tokenizing validation set"
+    )
+
+    # Create a Trainer for evaluation only (no training)
+    training_args = TrainingArguments(
+        output_dir=f"/tmp/eval_{model_path.replace('/', '_')}",  # Temporary output dir
+        per_device_eval_batch_size=per_device_eval_batch_size,
+        do_train=False,
+        do_eval=True,
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        compute_metrics=compute_metrics,
+    )
+
+    # Run evaluation
+    print("\nRunning evaluation...")
+    metrics = trainer.evaluate(eval_dataset=eval_dataset_tokenized)
+
+    # Print results
+    print("\n" + "=" * 80)
+    print(f"Checkpoint Evaluation Results: {model_path}")
+    print("=" * 80)
+
+    label_names = {0: "strong_wins", 1: "tie", 2: "weak_wins"}
+
+    for key, value in sorted(metrics.items()):
+        # Format the output nicely
+        if key.startswith("eval_accuracy_class_"):
+            class_idx = int(key.split("_")[-1])
+            print(f"Class {class_idx} ({label_names[class_idx]}) accuracy: {value:.4f}")
+        elif key.startswith("eval_precision_class_"):
+            class_idx = int(key.split("_")[-1])
+            print(f"Class {class_idx} ({label_names[class_idx]}) precision: {value:.4f}")
+        elif key.startswith("eval_recall_class_"):
+            class_idx = int(key.split("_")[-1])
+            print(f"Class {class_idx} ({label_names[class_idx]}) recall: {value:.4f}")
+        elif key.startswith("eval_f1_class_"):
+            class_idx = int(key.split("_")[-1])
+            print(f"Class {class_idx} ({label_names[class_idx]}) F1: {value:.4f}")
+        elif key.startswith("eval_support_class_"):
+            class_idx = int(key.split("_")[-1])
+            print(f"Class {class_idx} ({label_names[class_idx]}) support: {value}")
+        elif key.startswith("eval_pred_count_class_"):
+            class_idx = int(key.split("_")[-1])
+            print(f"Class {class_idx} ({label_names[class_idx]}) predicted count: {value}")
+        elif "macro" in key:
+            print(f"{key}: {value:.4f}")
+        elif key == "eval_accuracy":
+            print(f"\nOverall accuracy: {value:.4f}\n")
+        else:
+            print(f"{key}: {value}")
+
+    print("=" * 80)
+
+    return metrics
+
+
+# Evaluate the RouteLLM checkpoint
+metrics = evaluate_checkpoint_on_d_arena("routellm/bert")
+
+# %%
+metrics = evaluate_checkpoint_on_d_arena("routellm/bert_gpt4_augmented")
+
+# %% [markdown]
+# ## Training Setup 4: Tuning on balanced data
+#
+# Because my classifiers trained on full data actually beat both their snapshots by quite a bit, I will retrain and also change the metric for selecting the model to F1 as it seems like a better fit than eval loss or accuracy.
+#
+# Experiments to run
+# 1. Train full classifier head
+# 2. Train full model with just output proj classifier head (no feat. extraction)
 
 # %%
 run_bert_classifier_training(
     train_indices=None,
-    output_subdir="d_arena-small_classifier_full_model",
-    max_steps=2000,
+    output_subdir="d_arena-s_cls_full_model-balanced_data-bs128",
+    max_steps=2500,
     per_device_train_batch_size=128,
     per_device_eval_batch_size=128,
     learning_rate=1e-5,
@@ -1281,13 +1422,13 @@ run_bert_classifier_training(
     save_steps=100,
     logging_steps=10,
     wandb_project="routellm-bert-classifier",
-    wandb_run_name="d_arena-small_classifier_full_model",
+    wandb_run_name="d_arena-s_cls_full_model-balanced_data-bs128",
     warmup_ratio=0.1,
     load_best_model_at_end=True,
-    metric_for_best_model="eval_loss",  # Stop when eval loss stops improving
-    greater_is_better=False,
-    save_total_limit=1, 
-    freeze_encoder=False, 
+    metric_for_best_model="eval_f1_macro",
+    greater_is_better=True,
+    save_total_limit=2, 
+    freeze_encoder=True,
 )
 
 # %%
