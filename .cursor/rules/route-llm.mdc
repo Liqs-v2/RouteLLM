@@ -13,5 +13,6 @@ This project contains code for the paper "ROUTELLM: LEARNING TO ROUTE LLMS WITH 
 - We use the `./reproduce/roberta-classifier.ipynb` Jupyter notebook to orchestrate single training runs and demo data.
 - Use `jupytext --sync reproduce/roberta-classifier.ipynb` to sync changes from the Python mirror to the notebook.
 - If this doesnt work immediately, you must first configure the mirror via `jupytext --set-formats ipynb,py reproduce/roberta-classifier.ipynb`
+- `./reproduce/benchmark_bert_models.py` contains the model benchmarking script. It should re-us as much existing implementation in `./routellm/evals` as possible.
 - We store heavy data such as models and datasets in `/s3/lindenbauer/RouteLLM/models` and `/s3/lindenbauer/.cache` respectively.
 - Ensure you source the virtual environment when running code or jupytext `source .venv/bin/activate`
