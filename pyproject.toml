@@ -28,7 +28,8 @@ serve = ["fastapi", "shortuuid", "uvicorn"]
 eval = ["matplotlib", "pandarallel", "sglang", 'tiktoken']
 dev = ["black", "isort", "pre-commit", "notebook", "jupytext", "ipywidgets"]
 train = [
-	"wandb"
+	"wandb",
+	"scikit-learn"
 ]
 
 [project.urls]
