@@ -108,11 +108,13 @@ class BERTRouter(Router):
         self,
         checkpoint_path,
         num_labels=3,
+        tokenizer_path=None,
     ):
         self.model = AutoModelForSequenceClassification.from_pretrained(
             checkpoint_path, num_labels=num_labels
         )
-        self.tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
+        tokenizer_path = tokenizer_path or checkpoint_path
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
 
     def calculate_strong_win_rate(self, prompt):
         inputs = self.tokenizer(
