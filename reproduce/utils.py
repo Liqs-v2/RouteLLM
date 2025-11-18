@@ -45,8 +45,9 @@ def format_indices(indices: Iterable[int], threshold: int = 100) -> str:
 def run_bert_classifier_training(
     dataset_path: Optional[str] = None,
     *,
+    model_name_or_path: Path | str = "FacebookAI/xlm-roberta-base",
+    tokenizer_name_or_path: Path | str | None = None,
     script_path: Path | str = SCRIPT_PATH,
-    models_root: Path | str = MODELS_ROOT,
     train_split_name: str = "train",
     eval_split_name: str = "validation",
     train_indices: Optional[Iterable[int]] = None,
@@ -89,6 +90,8 @@ def run_bert_classifier_training(
         dataset_path: Path to dataset on disk or HF hub name (defaults to `D_ARENA_PATH`)
         train_split_name: Name of training split
         eval_split_name: Name of evaluation split
+        model_name_or_path: Hugging Face model identifier or local checkpoint path
+        tokenizer_name_or_path: Hugging Face tokenizer identifier/path (defaults to model)
         train_indices: Optional list of indices to select from train split
         eval_indices: Optional list of indices to select from eval split
         output_subdir: Subdirectory name under models_root for outputs
@@ -125,10 +128,15 @@ def run_bert_classifier_training(
         dataset_path = str(D_ARENA_PATH)
 
     script_path = Path(script_path)
-    models_root = Path(models_root)
-    models_root.mkdir(parents=True, exist_ok=True)
+    MODELS_ROOT.mkdir(parents=True, exist_ok=True)
 
     dataset_path_str = str(dataset_path)
+    model_name_or_path_str = str(model_name_or_path)
+    tokenizer_name_or_path_str = (
+        str(tokenizer_name_or_path)
+        if tokenizer_name_or_path is not None
+        else None
+    )
     
     # Load dataset from disk or hub to get size info
     if os.path.isdir(dataset_path_str):
@@ -136,7 +144,7 @@ def run_bert_classifier_training(
     else:
         dataset_loaded = load_dataset(dataset_path_str)
     
-    output_dir = models_root / output_subdir
+    output_dir = MODELS_ROOT / output_subdir
     output_dir.mkdir(parents=True, exist_ok=True)
     
     command = [
@@ -151,7 +159,7 @@ def run_bert_classifier_training(
         "--output-dir",
         str(output_dir),
         "--model-name",
-        "FacebookAI/xlm-roberta-base",
+        model_name_or_path_str,
         "--num-labels",
         "3",
         "--max-length",
@@ -186,6 +194,8 @@ def run_bert_classifier_training(
         wandb_log_model,
     ]
     
+    if tokenizer_name_or_path_str is not None:
+        command.extend(["--tokenizer-name", tokenizer_name_or_path_str])
     if lr_scheduler_type is not None:
         command.extend(["--lr-scheduler-type", lr_scheduler_type])
     if warmup_steps is not None:
@@ -224,7 +234,9 @@ def run_bert_classifier_training(
     print(f"Dataset: {dataset_path_str}")
     print(f"Train split: {train_split_name} ({train_size} examples)")
     print(f"Eval split: {eval_split_name} ({eval_size} examples)")
-    print(f"Model: FacebookAI/xlm-roberta-base")
+    print(f"Model: {model_name_or_path_str}")
+    if tokenizer_name_or_path_str is not None:
+        print(f"Tokenizer: {tokenizer_name_or_path_str}")
     print(f"Output: {output_dir}")
     print(f"\nTraining Hyperparameters:")
     print(f"  Max steps: {max_steps}")

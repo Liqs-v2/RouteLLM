@@ -142,6 +142,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pretrained model identifier.",
     )
     parser.add_argument(
+        "--tokenizer-name",
+        default=None,
+        help="Tokenizer identifier (defaults to --model-name when omitted).",
+    )
+    parser.add_argument(
         "--num-labels",
         type=int,
         default=3,
@@ -336,7 +341,8 @@ def main():
     if args.max_length is not None:
         tokenizer_kwargs["max_length"] = args.max_length
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    tokenizer_source = args.tokenizer_name or args.model_name
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
 
     # Load dataset from either local disk or HuggingFace Hub
     if os.path.isdir(args.dataset_name):
