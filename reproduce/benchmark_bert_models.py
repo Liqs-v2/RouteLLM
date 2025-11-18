@@ -32,15 +32,27 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 DEFAULT_CHECKPOINTS: Dict[str, Dict[str, str]] = {
     "bert_custom": {
         "path": "/s3/lindenbauer/RouteLLM/models/d_arena-cls-balanced_data-bs128/checkpoint-1900/",
-        "label": "Custom (checkpoint-1900)",
+        "label": "Custom (d_arena)",
+    },
+    # "bert_custom_mmlu": {
+    #     "path": "/s3/lindenbauer/RouteLLM/models/d_arena_mmlu-cls-macro_balanced/checkpoint-2400/",
+    #     "label": "Custom (d_arena + d_gold)",
+    # },
+    "bert_custom_judge": {
+        "path": "/s3/lindenbauer/RouteLLM/models/d_arena_judge-cls-macro_balanced/checkpoint-3500/",
+        "label": "Custom (d_arena + d_judge)",
     },
     "bert_augmented": {
         "path": "routellm/bert_gpt4_augmented",
-        "label": "Authors Augmented",
+        "label": "RouteLLM (d_arena + d_judge)",
     },
+    # "bert_gold": {
+    #     "path": "routellm/bert_mmlu_augmented",
+    #     "label": "RouteLLM (d_arena + d_gold)",
+    # },
     "bert_base": {
         "path": "routellm/bert",
-        "label": "Authors Base",
+        "label": "RouteLLM d_arena",
     },
 }
 
@@ -48,24 +60,6 @@ DEFAULT_CHECKPOINTS: Dict[str, Dict[str, str]] = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Benchmark multiple BERT router checkpoints on RouteLLM benchmarks.",
-    )
-    parser.add_argument(
-        "--custom-checkpoint",
-        type=str,
-        default=DEFAULT_CHECKPOINTS["bert_custom"]["path"],
-        help="Filesystem path (or HF repo id) for the custom checkpoint.",
-    )
-    parser.add_argument(
-        "--augmented-checkpoint",
-        type=str,
-        default=DEFAULT_CHECKPOINTS["bert_augmented"]["path"],
-        help="HF repo id for the authors' GPT-4 augmented checkpoint.",
-    )
-    parser.add_argument(
-        "--base-checkpoint",
-        type=str,
-        default=DEFAULT_CHECKPOINTS["bert_base"]["path"],
-        help="HF repo id for the authors' base checkpoint.",
     )
     parser.add_argument(
         "--benchmarks",
@@ -132,19 +126,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_checkpoints(args: argparse.Namespace) -> Dict[str, Dict[str, str]]:
-    checkpoints = {
-        "bert_custom": {
-            "path": args.custom_checkpoint,
-            "label": "Custom (checkpoint-1900)",
-        },
-        "bert_augmented": {
-            "path": args.augmented_checkpoint,
-            "label": "Authors Augmented",
-        },
-        "bert_base": {"path": args.base_checkpoint, "label": "Authors Base"},
-    }
-    for name, cfg in checkpoints.items():
+def resolve_checkpoints() -> Dict[str, Dict[str, str]]:
+    for name, cfg in DEFAULT_CHECKPOINTS.items():
         ckpt_path = cfg["path"]
         if os.path.exists(ckpt_path):
             continue
@@ -155,7 +138,7 @@ def resolve_checkpoints(args: argparse.Namespace) -> Dict[str, Dict[str, str]]:
             continue
         # Only warn – transformers will surface an error if the checkpoint is invalid.
         print(f"[WARN] Checkpoint path '{ckpt_path}' does not exist on disk.")
-    return checkpoints
+    return DEFAULT_CHECKPOINTS
 
 
 def create_benchmark(
@@ -341,6 +324,8 @@ def build_comparison_outputs(
             results_path = output_base / checkpoint_name / benchmark_name / "results.csv"
             if results_path.exists():
                 df = pd.read_csv(results_path)
+                # Update the method column with the current label from checkpoints dict
+                df["method"] = cfg["label"]
                 combined_frames.append(df)
         if not combined_frames:
             print(f"[WARN] Skipping comparison for {benchmark_name}; no results found.")
@@ -367,7 +352,7 @@ def build_comparison_outputs(
 
 def main():
     args = parse_args()
-    checkpoints = resolve_checkpoints(args)
+    checkpoints = resolve_checkpoints()
     output_base = Path(args.output_base)
     output_base.mkdir(parents=True, exist_ok=True)
 
