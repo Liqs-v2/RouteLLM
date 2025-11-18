@@ -1,0 +1,21 @@
+---
+alwaysApply: true
+---
+# Overview
+This project contains code for the paper "ROUTELLM: LEARNING TO ROUTE LLMS WITH  PREFERENCE DATA". I am trying to reproduce the BERT-based and Causal LLM routing strategies presented in the paper.
+
+# Rules
+- The main work for this reproduction takes places in the ./reproduce folder.
+- Be concise, favor Pythonic solutions and adhere to clean code best practices.
+- `./reproduce/train_roberta.py` contains the model training script.
+- We use HuggingFace Trainer to train a text classification model ontop of xlm-roberta-base.
+- `./reproduce/roberta-classifier.py` is a Python mirror of the `./reproduce/roberta-classifier.ipynb` Jupyter notebook. Exclusively work with this Python mirror whenever you want to change the notebook, it is more compatible with your way of working.
+- We use the `./reproduce/roberta-classifier.ipynb` Jupyter notebook to orchestrate single training runs and demo data.
+- Use `jupytext --sync reproduce/roberta-classifier.ipynb` to sync changes from the Python mirror to the notebook.
+- If this doesnt work immediately, you must first configure the mirror via `jupytext --set-formats ipynb,py reproduce/roberta-classifier.ipynb`
+- `./reproduce/benchmark_bert_models.py` contains the model benchmarking script. It should re-us as much existing implementation in `./routellm/evals` as possible.
+- `reproduce/roberta-classifier-stage_2_training.ipynb` orchestrates the stage 2 classifer training on `routellm/mmlu_battles` and `routellm/bert_gpt4_augmented`. It should also use `./reproduce/train_roberta.py` as underlying training script and call this in a subprocess to avoid moving the notebook kernel process to GPU. Use jupytext to mirror changes to the notebook and exclusivly make changes to its Python mirror `reproduce/roberta-classifier-stage_2_training.py`.
+- `reproduce/eval-benchmark-stats.ipynb` is used to analyze data and class distributions of the benchmarks used to evaluate the routing system. Use jupytext to mirror changes to the notebook and exclusivly make changes to its Python mirror `reproduce/eval-benchmark-stats.py`.
+- Benchmark data are stored in (1) `routellm/evals/gsm8k/gsm8k_responses.csv` for GSM8k, (2) all CSV files available in the folder `routellm/evals/mmlu/responses` for MMLU, and (3) `routellm/evals/mt_bench/judgements.jsonl` for MT-bench. Note that the format for (3) differs.
+- We store heavy data such as models and datasets in `/s3/lindenbauer/RouteLLM/models` and `/s3/lindenbauer/.cache` respectively.
+- Ensure you source the virtual environment when running code or jupytext `source .venv/bin/activate`
